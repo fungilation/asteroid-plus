@@ -140,7 +140,6 @@
       /**
        * CENTRALIZED CONFIGURATION
        * All magic numbers, durations, and tunables are extracted here.
-       * This makes balancing and future adjustments trivial.
        */
       const CONFIG = {
         // Core Physics
@@ -159,7 +158,7 @@
         // Timers & Cooldowns (in frames)
         INVINCIBLE_TIME: 180,
         PORTAL_COOLDOWN: 1800, // 30s
-        FIRE_RATE: 40, // 20s at 60fps -> actually 40 frames = ~0.67s, adjusted to feel deliberate
+        FIRE_RATE: 40,
         SHIP_EXPLODE_FRAMES: 90,
         MINE_ARM_TIME: 90, // 1.5s
         MINE_ARM_DISTANCE: 80,
@@ -203,12 +202,19 @@
         PARTICLE_LIFE_MAX: 60,
         FLOATING_TEXT_LIFE: 60,
         POWERUP_FLASH_LIFE: 30,
+
+        // Mines
+        MINE_MAX: 3,
+
+        // HUD
+        HUD_LINE_HEIGHT: 18,
+        HUD_TOP_MARGIN: 70,
+        HUD_BOTTOM_MARGIN: 35,
       };
 
       /**
        * GAME CLASS
        * Encapsulates all state, logic, and rendering.
-       * Eliminates global scope pollution and organizes code into logical components.
        */
       class Game {
         constructor() {
@@ -319,7 +325,7 @@
           this.levelTransition = 0;
           this.screenShake = 0;
           this.portalCooldown = 0;
-          this.mineCount = 0;
+          this.mineCount = 1; // Start with 1 carried mine
           this.powerupSpawnTimer = 0;
           this.timeSlowFactor = 1;
           this.spreadShotTimer = 0;
@@ -571,7 +577,7 @@
                 this.timeSlowFactor = 1;
                 this.bombUsed = false;
                 this.shieldUsed = false;
-                this.mineCount = 0;
+                this.mineCount = 1; // Reset carried mines on respawn
                 this.createFloatingText(
                   this.canvas.width / 2,
                   this.canvas.height / 2,
@@ -696,9 +702,10 @@
           }
           if (this.portalCooldown > 0) this.portalCooldown--;
 
-          if (this.keys["KeyX"] && this.mineCount < CONFIG.MINE_MAX) {
+          // Deploy mine logic fixed
+          if (this.keys["KeyX"] && this.mineCount > 0) {
             this.keys["KeyX"] = false;
-            this.mineCount++;
+            this.mineCount--;
             this.mines.push(this.createMine(this.ship.x, this.ship.y));
             this.createFloatingText(
               this.ship.x,
@@ -873,7 +880,7 @@
             m.pulsePhase += 0.05;
             if (m.life <= 0) {
               this.mines.splice(i, 1);
-              this.mineCount = Math.max(0, this.mineCount - 1);
+              // mineCount is NOT decremented here, it represents carried mines
               continue;
             }
             if (m.arming && !m.exploding) {
@@ -895,7 +902,7 @@
                 this.createExplosion(m.x, m.y, 15, "#f80", 3);
                 this.screenShake = 8;
                 this.mines.splice(i, 1);
-                this.mineCount = Math.max(0, this.mineCount - 1);
+                // mineCount is NOT decremented here
               }
               continue;
             }
@@ -1011,8 +1018,6 @@
         }
 
         // ─── COLLISION DETECTION ───
-        // NOTE: Currently uses O(n^2) reverse iteration which is correct for splicing.
-        // Future Optimization: Implement a Quadtree or Spatial Grid to reduce collision checks to O(n log n).
         checkCollisions() {
           if (!this.ship.alive) return;
           for (let j = this.asteroids.length - 1; j >= 0; j--) {
@@ -1461,6 +1466,10 @@
         }
 
         drawHUD() {
+          // Draw active power-ups centered at top (below LEVEL display)
+          this.drawActivePowerups();
+
+          // Draw standard HUD elements
           this.ctx.font = "bold 24px Courier New";
           this.ctx.fillStyle = "#fff";
           this.ctx.textAlign = "left";
@@ -1502,7 +1511,8 @@
             this.canvas.height - 15,
           );
 
-          let timerY = 70;
+          // Draw status text on left side (no overlap with active power-ups)
+          let timerY = CONFIG.HUD_TOP_MARGIN;
           this.ctx.textAlign = "left";
           this.ctx.font = "14px Courier New";
           if (this.spreadShotTimer > 0) {
@@ -1512,7 +1522,7 @@
               20,
               timerY,
             );
-            timerY += 18;
+            timerY += CONFIG.HUD_LINE_HEIGHT;
           }
           if (this.extendedRangeTimer > 0) {
             this.ctx.fillStyle = "#ff0";
@@ -1521,7 +1531,7 @@
               20,
               timerY,
             );
-            timerY += 18;
+            timerY += CONFIG.HUD_LINE_HEIGHT;
           }
           if (this.shieldTimer > 0) {
             this.ctx.fillStyle = "#0ff";
@@ -1530,17 +1540,17 @@
               20,
               timerY,
             );
-            timerY += 18;
+            timerY += CONFIG.HUD_LINE_HEIGHT;
           }
           if (this.timeSlowFactor < 1) {
             this.ctx.fillStyle = "#f0f";
             this.ctx.fillText(`SLOW TIME!`, 20, timerY);
-            timerY += 18;
+            timerY += CONFIG.HUD_LINE_HEIGHT;
           }
 
           this.ctx.fillStyle = "#888";
           this.ctx.font = "13px Courier New";
-          timerY = 70;
+          timerY = CONFIG.HUD_TOP_MARGIN;
           const portalReady = this.portalCooldown <= 0;
           this.ctx.fillStyle = portalReady ? "#0ff" : "#f00";
           this.ctx.fillText(
@@ -1549,10 +1559,9 @@
             timerY,
           );
           timerY += 16;
-          this.ctx.fillStyle =
-            this.mineCount < CONFIG.MINE_MAX ? "#f80" : "#888";
+          this.ctx.fillStyle = this.mineCount > 0 ? "#f80" : "#888";
           this.ctx.fillText(
-            `MINES: ${this.mineCount}/${CONFIG.MINE_MAX}`,
+            `MINES: ${this.mineCount}/${CONFIG.MINE_MAX} (${this.mines.length} active)`,
             20,
             timerY,
           );
@@ -1597,7 +1606,8 @@
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
           }
 
-          const stripY = this.canvas.height - 35;
+          // Draw bottom row key hints - properly centered
+          const stripY = this.canvas.height - CONFIG.HUD_BOTTOM_MARGIN;
           this.ctx.fillStyle = "rgba(0,0,0,0.5)";
           this.ctx.fillRect(0, stripY - 2, this.canvas.width, 32);
           this.ctx.strokeStyle = "rgba(100,100,100,0.3)";
@@ -1611,9 +1621,40 @@
           const stripText =
             "←→ROTATE  ↑THRUST  SPACE:FIRE  Z:PORTAL(30s)  X:MINE(3)  C:SPREAD  V:SHIELD  B:BOMB  N:RANGE  M:TIMESLOW  P:PAUSE  R:RESTART";
           this.ctx.fillStyle = "rgba(220,220,220,0.95)";
-          const textWidth = this.ctx.measureText(stripText).width;
-          const startX = (this.canvas.width - textWidth) / 2;
-          this.ctx.fillText(stripText, startX, stripY + 16);
+          // Center the text properly at the center of the screen
+          this.ctx.fillText(stripText, this.canvas.width / 2, stripY + 16);
+        }
+
+        // Draw active power-ups centered at top of screen
+        drawActivePowerups() {
+          let y = 55; // Start below LEVEL display
+          const centerX = this.canvas.width / 2;
+          this.ctx.font = "bold 16px Courier New";
+          this.ctx.textAlign = "center";
+
+          if (this.spreadShotTimer > 0) {
+            const remaining = Math.ceil(this.spreadShotTimer / CONFIG.FPS);
+            this.ctx.fillStyle = "#0f0";
+            this.ctx.fillText(`SPREAD SHOT (${remaining}s)`, centerX, y);
+            y += CONFIG.HUD_LINE_HEIGHT;
+          }
+          if (this.extendedRangeTimer > 0) {
+            const remaining = Math.ceil(this.extendedRangeTimer / CONFIG.FPS);
+            this.ctx.fillStyle = "#ff0";
+            this.ctx.fillText(`EXTENDED RANGE (${remaining}s)`, centerX, y);
+            y += CONFIG.HUD_LINE_HEIGHT;
+          }
+          if (this.shieldTimer > 0) {
+            const remaining = Math.ceil(this.shieldTimer / CONFIG.FPS);
+            this.ctx.fillStyle = "#0ff";
+            this.ctx.fillText(`SHIELD (${remaining}s)`, centerX, y);
+            y += CONFIG.HUD_LINE_HEIGHT;
+          }
+          if (this.timeSlowFactor < 1) {
+            this.ctx.fillStyle = "#f0f";
+            this.ctx.fillText(`TIME SLOW!`, centerX, y);
+            y += CONFIG.HUD_LINE_HEIGHT;
+          }
         }
 
         drawPauseOverlay() {
